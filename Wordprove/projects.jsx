@@ -223,23 +223,87 @@ function EmptyState({ onCreate, hasAny, filter }) {
 }
 
 // --- Modal: paste prototype URL, simulate pulling screens -------------------
+const SKIP_EXTS = new Set(['js','css','png','jpg','jpeg','gif','svg','ico','woff','woff2','ttf','pdf','map','json','xml','webp','mp4','zip']);
+
+async function crawlScreens(seedUrl, onProgress) {
+  const origin = new URL(seedUrl).origin;
+  const seen = new Set();
+  const found = [];
+
+  const tryAdd = (href, base) => {
+    try {
+      const u = new URL(href, base);
+      if (u.origin !== origin) return;
+      const key = u.origin + u.pathname;
+      if (seen.has(key)) return;
+      const ext = key.split('.').pop().toLowerCase();
+      if (SKIP_EXTS.has(ext)) return;
+      seen.add(key);
+      found.push(key);
+    } catch {}
+  };
+
+  tryAdd(seedUrl, seedUrl);
+
+  // BFS — up to 50 screens, 2 levels deep
+  for (let i = 0; i < found.length && found.length < 50; i++) {
+    onProgress(`Scanning ${new URL(found[i]).pathname}…`, i, found.length);
+    try {
+      const res = await fetch(found[i]);
+      if (!res.ok) continue;
+      const html = await res.text();
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      doc.querySelectorAll('a[href]').forEach(a => {
+        const attr = a.getAttribute('href');
+        if (attr) tryAdd(attr, found[i]);
+      });
+    } catch {}
+  }
+
+  return found;
+}
+
 function NewProjectModal({ onCancel, onCreate }) {
   const [name, setName] = useStateP("");
   const [url, setUrl] = useStateP("");
-  const [step, setStep] = useStateP("idle"); // idle | pulling | done
+  const [step, setStep] = useStateP("idle"); // idle | discovering | pulling | done
   const [progress, setProgress] = useStateP({ msg: "", count: 0, total: 0 });
+  const [discoverMsg, setDiscoverMsg] = useStateP("");
   const cancelRef = useRefP(false);
   const inputRef = useRefP(null);
 
   useEffectP(() => {
     inputRef.current && inputRef.current.focus();
-    const onKey = (e) => { if (e.key === "Escape" && step !== "pulling") onCancel(); };
+    const onKey = (e) => { if (e.key === "Escape" && step !== "pulling" && step !== "discovering") onCancel(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [step, onCancel]);
 
-  const urls = url.split('\n').map(u => u.trim()).filter(Boolean);
-  const urlCount = urls.length;
+  const urlList = url.split('\n').map(u => u.trim()).filter(Boolean);
+  const urlCount = urlList.length;
+
+  // Auto-discover: fetch the first URL and crawl all same-origin links
+  const discoverScreens = async () => {
+    const seed = urlList[0];
+    if (!seed) return;
+    setStep("discovering");
+    setDiscoverMsg("");
+    try {
+      const found = await crawlScreens(seed, (msg, done, total) => {
+        setProgress({ msg, count: done, total: Math.max(total, 1) });
+      });
+      setUrl(found.join('\n'));
+      if (found.length > 1) {
+        setDiscoverMsg(`Found ${found.length} screens. Review the list then pull.`);
+      } else {
+        setDiscoverMsg("Only 1 page found — the prototype may use JavaScript routing. Add more URLs manually.");
+      }
+    } catch {
+      setDiscoverMsg("Couldn't reach that URL. Make sure it's public (GitHub Pages works great here).");
+    } finally {
+      setStep("idle");
+    }
+  };
 
   const startPull = async () => {
     if (!urlCount) return;
@@ -247,10 +311,9 @@ function NewProjectModal({ onCancel, onCreate }) {
     cancelRef.current = false;
 
     const steps = [
-      { msg: "Connecting to prototype…", delay: 500 },
-      { msg: "Reading page structure…",  delay: 600 },
-      ...urls.map((_, i) => ({ msg: `Capturing screen ${i + 1} of ${urlCount}…`, delay: 360 })),
-      { msg: "Indexing copy strings…",   delay: 450 },
+      { msg: "Connecting to prototype…", delay: 400 },
+      ...urlList.map((_, i) => ({ msg: `Capturing screen ${i + 1} of ${urlCount}…`, delay: 320 })),
+      { msg: "Indexing copy strings…",   delay: 400 },
     ];
     const total = steps.length;
 
@@ -265,18 +328,20 @@ function NewProjectModal({ onCancel, onCreate }) {
     setTimeout(() => {
       onCreate({
         name: name.trim() || "Untitled review",
-        prototypeUrl: urls[0],
-        urls,
+        prototypeUrl: urlList[0],
+        urls: urlList,
       });
     }, 350);
   };
 
+  const busy = step === "pulling" || step === "discovering" || step === "done";
+
   return (
-    <div className="modal-scrim" onClick={() => step !== "pulling" && onCancel()}>
+    <div className="modal-scrim" onClick={() => !busy && onCancel()}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div className="modal-head">
           <h2>New review</h2>
-          <p>Paste one screen URL per line — each becomes a reviewable screen in the project.</p>
+          <p>Paste your prototype's starting URL and click <strong>Discover screens</strong> — we'll find every page automatically.</p>
         </div>
         <div className="modal-body">
           <div className="field-group">
@@ -287,26 +352,58 @@ function NewProjectModal({ onCancel, onCreate }) {
               placeholder="e.g. Add a card flow — v2"
               value={name}
               onChange={e => setName(e.target.value)}
-              disabled={step === "pulling"}
+              disabled={busy}
             />
           </div>
           <div className="field-group">
-            <label className="field-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
-              Screen URLs
-              {urlCount > 0 && <span style={{ fontWeight: 400, color: "var(--c-text-3)" }}>{urlCount} screen{urlCount > 1 ? 's' : ''}</span>}
-            </label>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <label className="field-label" style={{ margin: 0 }}>
+                Screen URLs
+                {urlCount > 0 && <span style={{ fontWeight: 400, color: "var(--c-text-3)", marginLeft: 8 }}>{urlCount} screen{urlCount > 1 ? 's' : ''}</span>}
+              </label>
+              <button
+                className="btn btn-ghost"
+                style={{ height: 26, fontSize: 11, padding: '0 10px', gap: 5 }}
+                onClick={discoverScreens}
+                disabled={busy || !urlList[0]}
+                title="Crawl the prototype and find all linked screens automatically"
+              >
+                {step === "discovering" ? (
+                  <><div className="spinner" style={{ width: 10, height: 10, borderWidth: 1.5 }} />Scanning…</>
+                ) : (
+                  <><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>Discover screens</>
+                )}
+              </button>
+            </div>
             <textarea
               className="field-input"
-              placeholder={"https://wasint-design.github.io/prototype/screen1.html\nhttps://wasint-design.github.io/prototype/screen2.html\n…"}
+              placeholder={"https://wasint-design.github.io/prototype/\n\nPaste the starting URL above then click Discover — or add multiple URLs here manually, one per line."}
               value={url}
-              onChange={e => setUrl(e.target.value)}
-              disabled={step === "pulling"}
-              rows={4}
+              onChange={e => { setUrl(e.target.value); setDiscoverMsg(""); }}
+              disabled={busy}
+              rows={5}
               style={{ resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.6 }}
             />
-            <p className="field-hint">One URL per line. Works with GitHub Pages, Figma, Framer, or any public link.</p>
+            {discoverMsg ? (
+              <p className="field-hint" style={{ color: discoverMsg.startsWith("Found") ? "var(--c-success)" : "var(--c-text-3)" }}>
+                {discoverMsg}
+              </p>
+            ) : (
+              <p className="field-hint">Paste one URL per line, or use Discover to auto-find all screens.</p>
+            )}
           </div>
 
+          {step === "discovering" && (
+            <div className="pull-progress">
+              <div className="spinner" />
+              <div style={{ flex: 1 }}>
+                <div className="step-name">{progress.msg || "Starting scan…"}</div>
+                <div style={{ marginTop: 6, height: 4, borderRadius: 2, background: "var(--c-accent-soft-2)", overflow: "hidden" }}>
+                  <div style={{ height: "100%", background: "var(--c-accent)", width: progress.total ? `${Math.min((progress.count / progress.total) * 100, 90)}%` : '10%', transition: "width 200ms ease" }} />
+                </div>
+              </div>
+            </div>
+          )}
           {step === "pulling" && (
             <div className="pull-progress">
               <div className="spinner" />
@@ -326,11 +423,11 @@ function NewProjectModal({ onCancel, onCreate }) {
           )}
         </div>
         <div className="modal-actions">
-          <button className="btn btn-ghost" onClick={onCancel} disabled={step === "pulling"}>Cancel</button>
+          <button className="btn btn-ghost" onClick={onCancel} disabled={busy}>Cancel</button>
           <button
             className="btn btn-primary"
             onClick={startPull}
-            disabled={step === "pulling" || step === "done" || !urlCount}
+            disabled={busy || !urlCount}
           >
             {step === "pulling" ? "Pulling…" : `Pull screenshot${urlCount > 1 ? 's' : ''}`}
           </button>
