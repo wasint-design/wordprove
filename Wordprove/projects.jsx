@@ -227,7 +227,7 @@ function NewProjectModal({ onCancel, onCreate }) {
   const [name, setName] = useStateP("");
   const [url, setUrl] = useStateP("");
   const [step, setStep] = useStateP("idle"); // idle | pulling | done
-  const [progress, setProgress] = useStateP({ msg: "", count: 0 });
+  const [progress, setProgress] = useStateP({ msg: "", count: 0, total: 0 });
   const cancelRef = useRefP(false);
   const inputRef = useRefP(null);
 
@@ -238,33 +238,35 @@ function NewProjectModal({ onCancel, onCreate }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [step, onCancel]);
 
-  const sample = "https://www.figma.com/proto/abc123/MuvMi-Add-card-flow";
+  const urls = url.split('\n').map(u => u.trim()).filter(Boolean);
+  const urlCount = urls.length;
 
   const startPull = async () => {
-    if (!url.trim()) return;
+    if (!urlCount) return;
     setStep("pulling");
     cancelRef.current = false;
+
     const steps = [
-      { msg: "Authenticating with Figma…", delay: 500 },
-      { msg: "Reading prototype tree…",    delay: 600 },
-      { msg: "Capturing screen 1 of 5…",   delay: 380 },
-      { msg: "Capturing screen 2 of 5…",   delay: 360 },
-      { msg: "Capturing screen 3 of 5…",   delay: 360 },
-      { msg: "Capturing screen 4 of 5…",   delay: 360 },
-      { msg: "Capturing screen 5 of 5…",   delay: 360 },
-      { msg: "Indexing copy strings…",     delay: 450 },
+      { msg: "Connecting to prototype…", delay: 500 },
+      { msg: "Reading page structure…",  delay: 600 },
+      ...urls.map((_, i) => ({ msg: `Capturing screen ${i + 1} of ${urlCount}…`, delay: 360 })),
+      { msg: "Indexing copy strings…",   delay: 450 },
     ];
-    for (let i = 0; i < steps.length; i++) {
+    const total = steps.length;
+
+    for (let i = 0; i < total; i++) {
       if (cancelRef.current) return;
-      setProgress({ msg: steps[i].msg, count: i });
+      setProgress({ msg: steps[i].msg, count: i, total });
       await new Promise(r => setTimeout(r, steps[i].delay));
     }
+
     setStep("done");
-    setProgress({ msg: "Pulled 5 screens.", count: steps.length });
+    setProgress({ msg: `Pulled ${urlCount} screen${urlCount > 1 ? 's' : ''}.`, count: total, total });
     setTimeout(() => {
       onCreate({
         name: name.trim() || "Untitled review",
-        prototypeUrl: url.trim() || sample,
+        prototypeUrl: urls[0],
+        urls,
       });
     }, 350);
   };
@@ -274,7 +276,7 @@ function NewProjectModal({ onCancel, onCreate }) {
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div className="modal-head">
           <h2>New review</h2>
-          <p>Paste a prototype link. We'll pull the latest frames and you can start commenting.</p>
+          <p>Paste one screen URL per line — each becomes a reviewable screen in the project.</p>
         </div>
         <div className="modal-body">
           <div className="field-group">
@@ -289,15 +291,20 @@ function NewProjectModal({ onCancel, onCreate }) {
             />
           </div>
           <div className="field-group">
-            <label className="field-label">Prototype URL</label>
-            <input
+            <label className="field-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
+              Screen URLs
+              {urlCount > 0 && <span style={{ fontWeight: 400, color: "var(--c-text-3)" }}>{urlCount} screen{urlCount > 1 ? 's' : ''}</span>}
+            </label>
+            <textarea
               className="field-input"
-              placeholder={sample}
+              placeholder={"https://wasint-design.github.io/prototype/screen1.html\nhttps://wasint-design.github.io/prototype/screen2.html\n…"}
               value={url}
               onChange={e => setUrl(e.target.value)}
               disabled={step === "pulling"}
+              rows={4}
+              style={{ resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.6 }}
             />
-            <p className="field-hint">Figma, Framer, Adobe XD, or any public prototype link.</p>
+            <p className="field-hint">One URL per line. Works with GitHub Pages, Figma, Framer, or any public link.</p>
           </div>
 
           {step === "pulling" && (
@@ -306,7 +313,7 @@ function NewProjectModal({ onCancel, onCreate }) {
               <div style={{ flex: 1 }}>
                 <div className="step-name">{progress.msg}</div>
                 <div style={{ marginTop: 6, height: 4, borderRadius: 2, background: "var(--c-accent-soft-2)", overflow: "hidden" }}>
-                  <div style={{ height: "100%", background: "var(--c-accent)", width: `${(progress.count / 8) * 100}%`, transition: "width 220ms ease" }} />
+                  <div style={{ height: "100%", background: "var(--c-accent)", width: `${(progress.count / progress.total) * 100}%`, transition: "width 220ms ease" }} />
                 </div>
               </div>
             </div>
@@ -323,9 +330,9 @@ function NewProjectModal({ onCancel, onCreate }) {
           <button
             className="btn btn-primary"
             onClick={startPull}
-            disabled={step === "pulling" || step === "done" || !url.trim()}
+            disabled={step === "pulling" || step === "done" || !urlCount}
           >
-            {step === "pulling" ? "Pulling…" : "Pull screenshots"}
+            {step === "pulling" ? "Pulling…" : `Pull screenshot${urlCount > 1 ? 's' : ''}`}
           </button>
         </div>
       </div>

@@ -13,6 +13,8 @@ function ReviewPage({ project, onUpdate, onBack }) {
   const [editingPinId, setEditingPinId] = useStateR(null);
   const [langFilter, setLangFilter] = useStateR("both");
   const [scopeFilter, setScopeFilter] = useStateR("all");
+  const [addingScreen, setAddingScreen] = useStateR(false);
+  const [newScreenUrl, setNewScreenUrl] = useStateR("");
 
   // Detected heights for URL-based screens { [screenId]: number }
   const [screenHeights, setScreenHeights] = useStateR({});
@@ -155,6 +157,35 @@ function ReviewPage({ project, onUpdate, onBack }) {
     const idx = order.indexOf(project.status);
     const next = order[(idx + 1) % order.length] || "ongoing";
     onUpdate({ ...project, status: next, updatedAt: Date.now() });
+  };
+
+  // ---- add screen --------------------------------------------------------
+  const handleAddScreen = () => {
+    const newUrls = newScreenUrl.split('\n').map(u => u.trim()).filter(Boolean);
+    if (!newUrls.length) return;
+    const now = Date.now();
+    const getScreenName = (url, idx) => {
+      try {
+        const file = new URL(url).pathname.split('/').pop().replace(/\.html?$/i, '');
+        if (!file) return `Screen ${idx + 1}`;
+        return file.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      } catch { return `Screen ${idx + 1}`; }
+    };
+    const existingCount = allScreens.length;
+    const added = newUrls.map((u, i) => ({
+      id: `screen_${now.toString(36)}_${i}`,
+      name: getScreenName(u, existingCount + i),
+      url: u,
+      page: String(existingCount + i + 1).padStart(2, '0'),
+    }));
+    onUpdate({
+      ...project,
+      customScreens: [...(project.customScreens || []), ...added],
+      updatedAt: now,
+    });
+    setNewScreenUrl("");
+    setAddingScreen(false);
+    setActiveScreenId(added[0].id);
   };
 
   // ---- screen content renderer ------------------------------------------
@@ -310,6 +341,39 @@ function ReviewPage({ project, onUpdate, onBack }) {
                 </div>
               );
             })}
+          </div>
+
+          {/* Add screen */}
+          <div style={{ padding: '8px 12px', borderTop: '1px solid var(--c-border)' }}>
+            {addingScreen ? (
+              <div>
+                <textarea
+                  className="field-input"
+                  placeholder={"https://…/screen2.html\nhttps://…/screen3.html"}
+                  value={newScreenUrl}
+                  onChange={e => setNewScreenUrl(e.target.value)}
+                  autoFocus
+                  rows={3}
+                  style={{ fontSize: 12, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }}
+                  onKeyDown={e => {
+                    if (e.key === 'Escape') { setAddingScreen(false); setNewScreenUrl(""); }
+                  }}
+                />
+                <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                  <button className="btn btn-ghost" style={{ flex: 1, height: 28, fontSize: 12 }} onClick={() => { setAddingScreen(false); setNewScreenUrl(""); }}>Cancel</button>
+                  <button className="btn btn-primary" style={{ flex: 1, height: 28, fontSize: 12 }} disabled={!newScreenUrl.trim()} onClick={handleAddScreen}>Add</button>
+                </div>
+              </div>
+            ) : (
+              <button
+                className="btn btn-ghost"
+                style={{ width: '100%', height: 32, fontSize: 12, justifyContent: 'center', gap: 6 }}
+                onClick={() => setAddingScreen(true)}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Add screen
+              </button>
+            )}
           </div>
         </aside>
 

@@ -150,30 +150,37 @@ function App() {
     }));
   }, []);
 
-  const createProject = ({ name, prototypeUrl }) => {
+  const createProject = ({ name, prototypeUrl, urls }) => {
     const id = `proj_${Date.now().toString(36)}`;
+    const now = Date.now();
 
-    // Derive a readable screen name from the URL filename
-    const getScreenName = (url) => {
+    const getScreenName = (url, fallbackIdx) => {
       try {
         const file = new URL(url).pathname.split('/').pop().replace(/\.html?$/i, '');
-        if (!file) return 'Screen 1';
+        if (!file) return `Screen ${fallbackIdx + 1}`;
         return file.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-      } catch { return 'Screen 1'; }
+      } catch { return `Screen ${fallbackIdx + 1}`; }
     };
 
-    const screenId = `screen_${Date.now().toString(36)}`;
+    const allUrls = (urls && urls.length) ? urls : [prototypeUrl];
+    const customScreens = allUrls.map((u, i) => ({
+      id: `screen_${now.toString(36)}_${i}`,
+      name: getScreenName(u, i),
+      url: u,
+      page: String(i + 1).padStart(2, '0'),
+    }));
+
     const proj = {
       id,
       name,
       prototypeUrl,
       status: "ongoing",
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      pulledAt: Date.now(),
+      createdAt: now,
+      updatedAt: now,
+      pulledAt: now,
       screenIds: [],
-      customScreens: [{ id: screenId, name: getScreenName(prototypeUrl), url: prototypeUrl, page: '01' }],
-      activeScreenId: screenId,
+      customScreens,
+      activeScreenId: customScreens[0].id,
       pins: [],
     };
     setState(s => ({
